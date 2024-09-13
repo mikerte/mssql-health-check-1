@@ -38,32 +38,24 @@ function Check-AvailabilityGroup {
         # Check if the instance is part of an Availability Group
         Write-Host "`n--- Checking Availability Group status for: $sqlServerInstance ---`n"
 
-        $agInfo = Invoke-Sqlcmd -ServerInstance $sqlServerInstance -Query "SELECT COUNT(*) AS AGCount FROM sys.availability_groups" -TrustServerCertificate
+        # Query to check for AG membership using replica states
+        $agReplicaInfo = Invoke-Sqlcmd -ServerInstance $sqlServerInstance -Query @"
+            SELECT rs.replica_id, rs.group_id, rs.role_desc, rs.connected_state_desc, ags.name AS AvailabilityGroupName
+            FROM sys.dm_hadr_availability_replica_states rs
+            JOIN sys.availability_groups ags
+            ON rs.group_id = ags.group_id
+"@ -TrustServerCertificate
 
-        # Extract the AGCount value
-        $agCount = [int]$agInfo[0].AGCount
-
-        if ($agCount -eq 0) {
-            # If no availability group is found, the instance is standalone
-            Write-Host "$sqlServerInstance is a standalone instance." -ForegroundColor Yellow
-        } elseif ($agCount -gt 0) {
-            # If part of an AG, provide details
+        # Check if any replicas were found
+        if ($agReplicaInfo.Count -gt 0) {
             Write-Host "$sqlServerInstance is part of an Availability Group." -ForegroundColor Green
 
             # Output AG details
-            $agStatus = Invoke-Sqlcmd -ServerInstance $sqlServerInstance -Query @"
-                SELECT ags.name AS AvailabilityGroupName,
-                       rs.replica_id,
-                       rs.role_desc AS RoleDescription,
-                       rs.connected_state_desc AS ConnectedState
-                FROM sys.availability_groups ags
-                JOIN sys.dm_hadr_availability_replica_states rs
-                    ON ags.group_id = rs.group_id
-"@ -TrustServerCertificate
-
-            # Display AG details
             Write-Host "`n--- Availability Group Details ---" -ForegroundColor Cyan
-            $agStatus | Format-Table -AutoSize
+            $agReplicaInfo | Format-Table -AutoSize
+        } else {
+            # If no rows were returned, the instance is standalone
+            Write-Host "$sqlServerInstance is a standalone instance." -ForegroundColor Yellow
         }
     }
     catch {
